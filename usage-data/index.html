@@ -111,25 +111,6 @@ th.modh{padding-top:7px;padding-bottom:7px}
 .foot{margin-top:26px;font-size:12px;color:var(--muted);line-height:1.7;border-top:1px solid var(--line);padding-top:16px}
 .foot b{color:var(--space)}
 @media(max-width:900px){.grid{grid-template-columns:1fr}.kpis{grid-template-columns:repeat(2,1fr)}}
-.refresh-btn{border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.07);color:#aab1c4;font:inherit;font-size:12px;font-weight:700;padding:7px 13px;border-radius:8px;cursor:pointer;letter-spacing:.04em;transition:.15s;white-space:nowrap}
-.refresh-btn:hover{background:rgba(255,255,255,.13);color:#fff;border-color:rgba(255,255,255,.35)}
-.ref-modal{position:fixed;inset:0;background:rgba(48,54,80,.5);display:flex;align-items:center;justify-content:center;z-index:100;opacity:0;pointer-events:none;transition:.18s}
-.ref-modal.show{opacity:1;pointer-events:auto}
-.ref-box{background:#fff;border-radius:16px;padding:28px 28px 24px;width:min(380px,92vw);box-shadow:0 8px 40px rgba(48,54,80,.25)}
-.ref-box h3{margin:0 0 6px;font-size:17px;font-weight:900;color:var(--space)}
-.ref-box p{margin:0 0 18px;font-size:13.5px;color:var(--muted);line-height:1.5}
-.ref-box input[type=password]{width:100%;border:1.5px solid var(--line);border-radius:9px;padding:10px 13px;font:inherit;font-size:15px;color:var(--space);outline:none;margin-bottom:14px;box-sizing:border-box;-webkit-appearance:none}
-.ref-box input:focus{border-color:var(--blue)}
-.ref-row{display:flex;gap:10px;justify-content:flex-end}
-.ref-cancel{border:1px solid var(--line);background:#fff;color:var(--muted);font:inherit;font-size:13.5px;font-weight:700;padding:9px 16px;border-radius:9px;cursor:pointer}
-.ref-cancel:hover{border-color:var(--bad);color:var(--bad)}
-.ref-go{border:0;background:var(--blue);color:#fff;font:inherit;font-size:13.5px;font-weight:700;padding:9px 20px;border-radius:9px;cursor:pointer}
-.ref-go:hover{background:var(--blue-d)}
-.ref-go:disabled{opacity:.5;cursor:not-allowed}
-.ref-status{margin-top:12px;font-size:13px;color:var(--muted);min-height:18px;line-height:1.5}
-.ref-toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#1f9d6b;color:#fff;font-weight:700;font-size:14px;padding:11px 22px;border-radius:11px;box-shadow:0 4px 20px rgba(0,0,0,.2);z-index:200;opacity:0;pointer-events:none;transition:.22s;white-space:nowrap;max-width:90vw;text-align:center}
-.ref-toast.err{background:var(--bad)}
-.ref-toast.show{opacity:1}
 </style>
 </head>
 <body>
@@ -139,26 +120,9 @@ th.modh{padding-top:7px;padding-bottom:7px}
       <div class="logo"></div>
       <div><h1>GovSpend</h1><div class="sub">Usage Intelligence</div></div>
     </div>
-    <div style="display:flex;align-items:center;gap:16px">
-      <button class="refresh-btn" onclick="openRefresh()">↻ Refresh data</button>
-      <div class="stamp" id="stamp"></div>
-    </div>
+    <div class="stamp" id="stamp"></div>
   </div>
 </header>
-
-<div class="ref-modal" id="refModal">
-  <div class="ref-box">
-    <h3>Refresh usage data</h3>
-    <p>Queries CrateDB live and pushes updated data to the site. Takes ~30 seconds.</p>
-    <input type="password" id="refPwd" placeholder="Password" autocomplete="current-password"/>
-    <div class="ref-row">
-      <button class="ref-cancel" onclick="closeRefresh()">Cancel</button>
-      <button class="ref-go" id="refGo" onclick="doRefresh()">Refresh →</button>
-    </div>
-    <div class="ref-status" id="refStatus"></div>
-  </div>
-</div>
-<div class="ref-toast" id="refToast"></div>
 
 <div class="controls">
   <div class="controls-in">
@@ -256,7 +220,7 @@ th.modh{padding-top:7px;padding-bottom:7px}
 <script>
 /*__DATA__*/
 </script>
-<script src="usage_data.js"></script>
+<script src="usage_data.js?v=1789393157"></script>
 <script>
 const D = window.GS_DATA;
 const fmt = n => Math.round(n||0).toLocaleString();
@@ -620,69 +584,6 @@ document.getElementById('foot').innerHTML=
 function render(){syncTrial();renderKpis();renderTrend();renderMix();renderLb();renderOrgs();renderUsers();}
 buildSortUI();
 render();
-
-// ---- Refresh modal -------------------------------------------------------
-function openRefresh() {
-  document.getElementById('refModal').classList.add('show');
-  setTimeout(() => document.getElementById('refPwd').focus(), 50);
-}
-function closeRefresh() {
-  document.getElementById('refModal').classList.remove('show');
-  document.getElementById('refPwd').value = '';
-  document.getElementById('refStatus').textContent = '';
-  const btn = document.getElementById('refGo');
-  btn.disabled = false;
-  btn.textContent = 'Refresh →';
-}
-async function doRefresh() {
-  const pwd = document.getElementById('refPwd').value;
-  if (!pwd) { document.getElementById('refPwd').focus(); return; }
-  const btn = document.getElementById('refGo');
-  const status = document.getElementById('refStatus');
-  btn.disabled = true;
-  btn.textContent = 'Refreshing…';
-  status.style.color = 'var(--muted)';
-  status.textContent = 'Querying CrateDB — this takes ~30 seconds…';
-  try {
-    const res = await fetch('/.netlify/functions/refresh-usage-data', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password: pwd }),
-      signal: AbortSignal.timeout(90_000),
-    });
-    const body = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      status.style.color = 'var(--bad)';
-      status.textContent = body.error || 'Error ' + res.status;
-      btn.disabled = false;
-      btn.textContent = 'Retry →';
-      return;
-    }
-    showToast('✓ Updated — ' + (body.orgs||0).toLocaleString() + ' orgs · ' + (body.users||0).toLocaleString() + ' users · ' + (body.generatedAt||'') + '. Reloading…');
-    closeRefresh();
-    setTimeout(() => location.reload(), 3000);
-  } catch(err) {
-    status.style.color = 'var(--bad)';
-    status.textContent = err.name === 'TimeoutError'
-      ? 'Timed out. The data may still update in the background — reload in a minute to check.'
-      : err.message;
-    btn.disabled = false;
-    btn.textContent = 'Retry →';
-  }
-}
-function showToast(msg, isErr) {
-  const t = document.getElementById('refToast');
-  t.textContent = msg;
-  t.className = 'ref-toast show' + (isErr ? ' err' : '');
-  setTimeout(() => t.classList.remove('show'), 5000);
-}
-document.getElementById('refPwd').addEventListener('keydown', e => {
-  if (e.key === 'Enter') doRefresh();
-  if (e.key === 'Escape') closeRefresh();
-});
-document.getElementById('refModal').addEventListener('click', e => {
-  if (e.target === e.currentTarget) closeRefresh();
-});
 </script>
 
 </body>
