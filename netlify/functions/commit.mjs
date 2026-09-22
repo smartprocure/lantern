@@ -71,10 +71,10 @@ export default async (req) => {
     return (await res.json()).sha;
   }
 
-  async function putFile(path, content, message, sha) {
+  async function putFile(path, content, message, sha, isBase64 = false) {
     const payload = {
       message,
-      content: utf8ToBase64(content),
+      content: isBase64 ? content : utf8ToBase64(content),
       branch: "main",
     };
     if (sha) payload.sha = sha;
@@ -224,7 +224,7 @@ export default async (req) => {
       return json({ error: 'data action requires a non-empty files array' }, 400);
     }
     const ALLOWED_EXT = new Set([
-      'json', 'csv', 'tsv', 'txt', 'geojson', 'svg', 'md', 'js', 'mjs', 'css',
+      'json', 'csv', 'tsv', 'txt', 'geojson', 'svg', 'md', 'js', 'mjs', 'css', 'pdf',
     ]);
     const clean = [];
     for (const f of files) {
@@ -274,7 +274,7 @@ export default async (req) => {
   // index.html (e.g. a data.json the HTML fetches, or a sibling app.js/styles.css).
   // Text only — putFile base64-encodes UTF-8, which would corrupt binary formats.
   const ALLOWED_DATA_EXT = new Set([
-    "json", "csv", "tsv", "txt", "geojson", "svg", "md", "js", "mjs", "css",
+    "json", "csv", "tsv", "txt", "geojson", "svg", "md", "js", "mjs", "css", "pdf",
   ]);
   const cleanDataFiles = [];
   if (dataFiles != null) {
@@ -294,7 +294,7 @@ export default async (req) => {
       if (typeof f.content !== "string") {
         return json({ error: `Data file "${name}" content must be a string` }, 400);
       }
-      cleanDataFiles.push({ name, content: f.content });
+      cleanDataFiles.push({ name, content: f.content, binary: !!f.binary });
     }
   }
 
@@ -323,6 +323,7 @@ export default async (req) => {
         df.content,
         `${dfSha ? "Update" : "Add"} ${dfPath} via Studio (by ${email})`,
         dfSha,
+        df.binary,
       );
       dataCommits.push({ path: dfPath, commitSha: dfRes.commit?.sha || null });
     }

@@ -224,9 +224,9 @@
   <div id="data-files-upload" class="field" hidden>
     <label>Data &amp; asset files <span style="font-weight:400;color:var(--muted-2)">— optional</span></label>
     <label class="drop" id="data-drop">
-      <div class="big">Drop .json / .csv / .js / .css files the HTML references</div>
-      <div class="small">or click to choose. Committed next to index.html so relative paths like <code>./data.json</code> or <code>./app.js</code> work.</div>
-      <input type="file" id="data-input" multiple accept=".json,.csv,.tsv,.txt,.geojson,.svg,.md,.js,.mjs,.css,application/json,text/csv,text/javascript,text/css" />
+      <div class="big">Drop .json / .csv / .js / .css / .pdf files the HTML references</div>
+      <div class="small">or click to choose. Committed next to index.html so relative paths like <code>./data.json</code> or <code>./report.pdf</code> work.</div>
+      <input type="file" id="data-input" multiple accept=".json,.csv,.tsv,.txt,.geojson,.svg,.md,.js,.mjs,.css,.pdf,application/json,text/csv,text/javascript,text/css,application/pdf" />
     </label>
     <div id="data-file-hint" class="small" style="margin-top:8px;color:var(--muted-2)" hidden></div>
     <div id="data-file-summary" class="file-list"></div>
@@ -1464,16 +1464,26 @@ const dataFileHint = document.getElementById('data-file-hint');
 dataDrop.addEventListener('drop', ev => { ev.preventDefault(); handleDataFiles(ev.dataTransfer.files); });
 dataInput.addEventListener('change', ev => { handleDataFiles(ev.target.files); dataInput.value = ''; });
 
-const DATA_EXT_RE = /\.(json|csv|tsv|txt|geojson|svg|md|js|mjs|css)$/i;
+const DATA_EXT_RE = /\.(json|csv|tsv|txt|geojson|svg|md|js|mjs|css|pdf)$/i;
 
 async function handleDataFiles(fileList) {
   for (const f of fileList) {
     const name = f.name;
     if (!DATA_EXT_RE.test(name)) { alert(`Unsupported data file type: ${name}`); continue; }
     if (state.uploadedDataFiles.some(d => d.name === name)) continue; // dedupe by name
-    let content;
+    const isPdf = /\.pdf$/i.test(name);
+    let content, binary = false;
     try {
-      content = await f.text();
+      if (isPdf) {
+        const buf = await f.arrayBuffer();
+        const bytes = new Uint8Array(buf);
+        let str = '';
+        for (let i = 0; i < bytes.byteLength; i++) str += String.fromCharCode(bytes[i]);
+        content = btoa(str);
+        binary = true;
+      } else {
+        content = await f.text();
+      }
     } catch (err) {
       alert(`Couldn't read ${name}: ${err.message}`);
       continue;
@@ -1482,7 +1492,7 @@ async function handleDataFiles(fileList) {
       try { JSON.parse(content); }
       catch (err) { alert(`${name} is not valid JSON, so it wasn't attached:\n\n${err.message}`); continue; }
     }
-    state.uploadedDataFiles.push({ name, content });
+    state.uploadedDataFiles.push({ name, content, binary, sizeKb: f.size / 1024 });
   }
   renderDataFiles();
   renderDataFileHint();
@@ -1493,7 +1503,7 @@ function renderDataFiles() {
     <div class="file-card">
       <div class="file-meta">
         <div class="file-name">${escapeHtml(f.name)}</div>
-        <div class="file-stats">${(f.content.length / 1024).toFixed(1)} KB · committed alongside index.html</div>
+        <div class="file-stats">${(f.sizeKb !== undefined ? f.sizeKb : f.content.length / 1024).toFixed(1)} KB · committed alongside index.html</div>
       </div>
       <button class="file-x" data-i="${i}" title="Remove">×</button>
     </div>
@@ -1513,7 +1523,7 @@ function renderDataFiles() {
 // those aren't committed alongside the dashboard.
 function findAssetRefs(html) {
   const refs = new Set();
-  const re = /["'`]\s*([^"'`\s]+?\.(?:json|csv|tsv|geojson|js|mjs|css))(?:[?#][^"'`]*)?\s*["'`]/gi;
+  const re = /["'`]\s*([^"'`\s]+?\.(?:json|csv|tsv|geojson|js|mjs|css|pdf))(?:[?#][^"'`]*)?\s*["'`]/gi;
   let m;
   while ((m = re.exec(html)) !== null) {
     const p = m[1];
@@ -1597,7 +1607,7 @@ async function shipNow() {
     }
 
     if (state.uploadMode === 'upload' && state.uploadedDataFiles.length) {
-      payload.dataFiles = state.uploadedDataFiles.map(f => ({ name: f.name, content: f.content }));
+      payload.dataFiles = state.uploadedDataFiles.map(f => ({ name: f.name, content: f.content, ...(f.binary ? { binary: true } : {}) }));
     }
 
     const res = await fetch('/api/commit', {
