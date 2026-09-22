@@ -1606,8 +1606,13 @@ async function shipNow() {
       payload.registryEntry = entry;
     }
 
-    if (state.uploadMode === 'upload' && state.uploadedDataFiles.length) {
-      payload.dataFiles = state.uploadedDataFiles.map(f => ({ name: f.name, content: f.content, ...(f.binary ? { binary: true } : {}) }));
+    // Binary files (PDFs) are uploaded individually after the HTML ship to stay
+    // under Netlify's function body limit and GitHub's Contents API size limit.
+    const textDataFiles = state.uploadedDataFiles.filter(f => !f.binary);
+    const binaryDataFiles = state.uploadedDataFiles.filter(f => f.binary);
+
+    if (state.uploadMode === 'upload' && textDataFiles.length) {
+      payload.dataFiles = textDataFiles.map(f => ({ name: f.name, content: f.content }));
     }
 
     const res = await fetch('/api/commit', {
@@ -1623,6 +1628,26 @@ async function shipNow() {
       return;
     }
     if (!res.ok) throw new Error(data.error || `Commit failed: ${res.status}`);
+
+    // Upload binary files one at a time
+    for (let i = 0; i < binaryDataFiles.length; i++) {
+      const f = binaryDataFiles[i];
+      btn.textContent = `Uploading files… (${i + 1} / ${binaryDataFiles.length})`;
+      const pdfRes = await fetch('/api/commit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'data',
+          slug: state.targetSlug,
+          private: state.isPrivate,
+          files: [{ name: f.name, content: f.content, binary: true }],
+          auth: admin,
+        }),
+      });
+      const pdfData = await pdfRes.json().catch(() => ({}));
+      if (pdfRes.status === 401) { clearAdmin(); errEl.textContent = 'Session expired — sign in again.'; errEl.hidden = false; return; }
+      if (!pdfRes.ok) throw new Error(`Failed to commit ${f.name}: ${pdfData.error || pdfRes.status}`);
+    }
 
     shipModal.hidden = true;
     document.getElementById('success-link').href = data.deployUrl;

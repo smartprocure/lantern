@@ -72,11 +72,10 @@ export default async (req) => {
   }
 
   async function putFile(path, content, message, sha, isBase64 = false) {
-    const payload = {
-      message,
-      content: isBase64 ? content : utf8ToBase64(content),
-      branch: "main",
-    };
+    const encoded = isBase64 ? content : utf8ToBase64(content);
+    // GitHub Contents API caps files at ~1 MB. Use the Git Data API for anything larger.
+    if (encoded.length > 700_000) return putFileViaBlobs(path, encoded, message);
+    const payload = { message, content: encoded, branch: "main" };
     if (sha) payload.sha = sha;
     const res = await fetch(`${ghBase}/${path}`, {
       method: "PUT",
@@ -85,6 +84,52 @@ export default async (req) => {
     });
     if (!res.ok) throw new Error(`PUT ${path} → ${res.status}: ${await res.text()}`);
     return res.json();
+  }
+
+  // Commit a file of any size using the Git Data API (blob → tree → commit → ref).
+  async function putFileViaBlobs(path, base64Content, message) {
+    const ghApi = `https://api.github.com/repos/${repo}`;
+
+    const blobRes = await fetch(`${ghApi}/git/blobs`, {
+      method: "POST",
+      headers: { ...headers, "Content-Type": "application/json" },
+      body: JSON.stringify({ content: base64Content, encoding: "base64" }),
+    });
+    if (!blobRes.ok) throw new Error(`blob → ${blobRes.status}: ${await blobRes.text()}`);
+    const { sha: blobSha } = await blobRes.json();
+
+    const refRes = await fetch(`${ghApi}/git/ref/heads/main`, { headers });
+    if (!refRes.ok) throw new Error(`ref → ${refRes.status}`);
+    const parentSha = (await refRes.json()).object.sha;
+
+    const commitRes = await fetch(`${ghApi}/git/commits/${parentSha}`, { headers });
+    if (!commitRes.ok) throw new Error(`parent commit → ${commitRes.status}`);
+    const baseTreeSha = (await commitRes.json()).tree.sha;
+
+    const treeRes = await fetch(`${ghApi}/git/trees`, {
+      method: "POST",
+      headers: { ...headers, "Content-Type": "application/json" },
+      body: JSON.stringify({ base_tree: baseTreeSha, tree: [{ path, mode: "100644", type: "blob", sha: blobSha }] }),
+    });
+    if (!treeRes.ok) throw new Error(`tree → ${treeRes.status}: ${await treeRes.text()}`);
+    const { sha: treeSha } = await treeRes.json();
+
+    const newCommitRes = await fetch(`${ghApi}/git/commits`, {
+      method: "POST",
+      headers: { ...headers, "Content-Type": "application/json" },
+      body: JSON.stringify({ message, tree: treeSha, parents: [parentSha] }),
+    });
+    if (!newCommitRes.ok) throw new Error(`new commit → ${newCommitRes.status}: ${await newCommitRes.text()}`);
+    const { sha: newCommitSha } = await newCommitRes.json();
+
+    const patchRes = await fetch(`${ghApi}/git/refs/heads/main`, {
+      method: "PATCH",
+      headers: { ...headers, "Content-Type": "application/json" },
+      body: JSON.stringify({ sha: newCommitSha }),
+    });
+    if (!patchRes.ok) throw new Error(`ref update → ${patchRes.status}: ${await patchRes.text()}`);
+
+    return { commit: { sha: newCommitSha } };
   }
 
   async function deleteFile(path, message, sha) {
@@ -245,13 +290,14 @@ export default async (req) => {
       const commits = [];
       const actor = email || 'pipeline';
       for (const f of clean) {
-        const path = `${slug}/${f.name}`;
+        const path = `${prefix}${slug}/${f.name}`;
         const sha  = await getSha(path);
         const res  = await putFile(
           path,
           f.content,
           `Update ${path} via pipeline (by ${actor})`,
           sha,
+          !!f.binary,
         );
         commits.push({ path, commitSha: res.commit?.sha || null });
       }
